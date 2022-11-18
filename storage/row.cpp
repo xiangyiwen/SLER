@@ -400,21 +400,34 @@ RC row_t::get_row(access_t type, txn_man * txn, row_t *& row, Access * access) {
 //             we can always access a valid version, unless we are aborted
             uint64_t starttime = get_sys_clock();
 
-            while((txn->status != ABORTED) && rc == WAIT){
+            // 11-18
+            while(rc == WAIT){
                 rc = this->manager->access(txn, ts_type, row, access);
 
                 uint64_t span = get_sys_clock() - starttime;
-                if(span > 100000000){
-                    printf("txn_id:%lu,time: %lu\n",txn->sler_txn_id,span);
-//                    return Abort;
+                if(span > 1000000){
+                    printf("WAIT txn_id:%lu,time: %lu\n",txn->sler_txn_id,span);
                 }
                 PAUSE
             }
 
-            // I am aborted by other txn
-            if(txn->status == ABORTED){
-                return Abort;
-            }
+//            while((txn->status != ABORTED) && rc == WAIT){
+//                rc = this->manager->access(txn, ts_type, row, access);
+//
+//                uint64_t span = get_sys_clock() - starttime;
+//                if(span > 100000000){
+//                    printf("WAIT    txn_id:%lu,time: %lu\n",txn->sler_txn_id,span);
+//                }
+//                PAUSE
+//            }
+
+            /* I am aborted by other txn[Bug: already create a new version, but return abort, then the row_cnt won't add 1, the abort() cannot recycle the new created version]
+               BUG: retire_ID != retire.sler_txn_id
+               Fixed: Don't judge whether txn->status == ABORTED, let txn.cpp do that. That won't hurt much performance.
+             */
+//            if(txn->status == ABORTED){
+//                return Abort;
+//            }
 
             if (rc == RCOK ) {
                 row = txn->cur_row;
