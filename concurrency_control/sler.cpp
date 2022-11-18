@@ -11,12 +11,12 @@
 #if CC_ALG == SLER
 
 RC txn_man::validate_sler(RC rc) {
-    uint64_t starttime = get_sys_clock();
+//    uint64_t starttime = get_sys_clock();
     while(true){
-        uint64_t span = get_sys_clock() - starttime;
-        if(span > 1000000){
-            printf("txn_id:%lu,validate_time: %lu\n",sler_txn_id,span);
-        }
+//        uint64_t span = get_sys_clock() - starttime;
+//        if(span > 1000000){
+//            printf("txn_id:%lu,validate_time: %lu\n",sler_txn_id,span);
+//        }
 
         // Abort myself actively
         if(status == ABORTED || rc == Abort){
@@ -305,19 +305,19 @@ void txn_man::abort_process(txn_man * txn){
 //    status_latch = false;
 
     //11-18
-    if(row_cnt == 0){
-       cout << "type: " << accesses[0]->type << endl;
-       Version* newer = (Version*)accesses[0]->tuple_version;
-       newer = newer->prev;
-       if(newer) {
-           cout << "new version: " << newer << endl;
-           cout << "new version(retire txn): " << newer->retire << endl;
-           cout << "new version(retire txn - sler_txn_id): " << newer->retire->sler_txn_id << endl;
-           cout << "new version(retire ID): " << newer->retire_ID << endl;
-           cout << "txn: " << txn << endl;
-           cout << "txn(sler_txn_id): " << txn->sler_txn_id << endl;
-       }
-    }
+//    if(row_cnt == 0){
+//       cout << "type: " << accesses[0]->type << endl;
+//       Version* newer = (Version*)accesses[0]->tuple_version;
+//       newer = newer->prev;
+//       if(newer) {
+//           cout << "new version: " << newer << endl;
+//           cout << "new version(retire txn): " << newer->retire << endl;
+//           cout << "new version(retire txn - sler_txn_id): " << newer->retire->sler_txn_id << endl;
+//           cout << "new version(retire ID): " << newer->retire_ID << endl;
+//           cout << "txn: " << txn << endl;
+//           cout << "txn(sler_txn_id): " << txn->sler_txn_id << endl;
+//       }
+//    }
 
 
     for(int rid = 0; rid < row_cnt; rid++){

@@ -46,7 +46,7 @@ public:
     void 			init(row_t * row);
     RC 				access(txn_man * txn, TsType type, Access * access);
     Version*        get_version_header(){return this->version_header;}
-    RC              access_helper(txn_man * txn, Access * access,Version* temp_version_);
+//    RC              access_helper(txn_man * txn, Access * access,Version* temp_version_);
 
 //    void            abort_process(txn_man * txn);
 //    void 			write_process(txn_man * txn, uint64_t serial_id, RC rc);

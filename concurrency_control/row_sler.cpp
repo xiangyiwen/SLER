@@ -56,6 +56,8 @@ RC Row_sler::access(txn_man * txn, TsType type, Access * access){
 
     RC rc = RCOK;
     uint64_t txn_id = txn->get_sler_txn_id();
+    Version* temp_version = version_header;
+    txn_man* retire_txn;
 
     while(!ATOM_CAS(blatch, false, true)){
         PAUSE
@@ -64,83 +66,90 @@ RC Row_sler::access(txn_man * txn, TsType type, Access * access){
     if (type == R_REQ) {
         // Note: should search write set and read set. However, since no record will be accessed twice, we don't have to search these two sets
 
-        txn_man* retire_txn = version_header->retire;
+        while (temp_version) {
 
-        // committed version
-        if(!retire_txn){
-            rc = RCOK;
+            retire_txn = temp_version->retire;
+
+            // committed version
+            if (!retire_txn) {
+                rc = RCOK;
 //            txn->cur_row = version_header->row;             // assign current version to cur_row for future recording
-//            txn->cur_row->set_data(version_header->data, MAX_TUPLE_SIZE);       //11-18
-//            txn->cur_row->data = version_header->data;
-//            access->data = version_header->row;
 
-            access->tuple_version = version_header;
-        }
-        // uncommitted version
-        else{
-            /**
-             * Deadlock Detection
-             */
-            assert(retire_txn != txn);
-            assert(version_header->retire_ID == retire_txn->sler_txn_id);          //11-18
+                access->tuple_version = temp_version;
+
+                break;
+            }
+                // uncommitted version
+            else {
+                /**
+                 * Deadlock Detection
+                 */
+                assert(retire_txn != txn);
+                assert(temp_version->retire_ID == retire_txn->sler_txn_id);          //11-18
 
 
-            // [DeadLock]
-            if(retire_txn->WaitingSetContains(txn_id)){
+                // [DeadLock]
+                if (retire_txn->WaitingSetContains(txn_id) && retire_txn->set_abort() == RUNNING) {
 //                blatch = false;
-                retire_txn->set_abort();
+//                    retire_txn->set_abort();
 
-                rc = access_helper(txn,access,version_header);
-            }
-            // [No Deadlock]
-            else{
+//                    rc = access_helper(txn, access, version_header);
+                    temp_version = temp_version->next;
+                    continue;
+                }
+                    // [No Deadlock]
+                else {
 
-                status_t temp_status = retire_txn->status;
+                    status_t temp_status = retire_txn->status;
 
-                // [IMPOSSIBLE]: read without recording dependency
-                if(temp_status == committing || temp_status == COMMITED){
-                    // safe: retire_txn cannot commit without acquiring the blatch on this tuple(retire_txn need blatch to modify meta-data),
-                    // which means it can commit only after I finish the operation(blatch is owned by me)
+                    // [IMPOSSIBLE]: read without recording dependency
+                    if (temp_status == committing || temp_status == COMMITED) {
+                        // safe: retire_txn cannot commit without acquiring the blatch on this tuple(retire_txn need blatch to modify meta-data),
+                        // which means it can commit only after I finish the operation(blatch is owned by me)
 
 //                    txn->cur_row = version_header->row;
-//                    txn->cur_row->set_data(version_header->data, MAX_TUPLE_SIZE);       //11-18
-//                    txn->cur_row->data = version_header->data;
-//                    access->data = version_header->row;
 
-                    access->tuple_version = version_header;
-                }
-                else if(temp_status == RUNNING || temp_status == validating || temp_status == writing){       // record dependency
+                        access->tuple_version = temp_version;
 
-                    // 11-8: Simplize the logic of recording dependency ------------------------
-                    txn->SemaphoreAddOne();
-                    retire_txn->PushDependency(txn,txn->get_sler_txn_id(),DepType::WRITE_READ_);
+                        break;
+                    } else if (temp_status == RUNNING || temp_status == validating || temp_status == writing) {       // record dependency
 
-                    // Update waiting set
-                    txn->UnionWaitingSet(retire_txn->sler_waiting_set);
+                        // 11-8: Simplize the logic of recording dependency ------------------------
+                        txn->SemaphoreAddOne();
+                        retire_txn->PushDependency(txn, txn->get_sler_txn_id(), DepType::WRITE_READ_);
 
-                    //更新依赖链表中所有事务的 waiting_set
-                    auto deps = txn->sler_dependency;
-                    for(auto dep_pair :deps){
-                        txn_man* txn_dep = dep_pair.dep_txn;
+                        // Update waiting set
+                        txn->UnionWaitingSet(retire_txn->sler_waiting_set);
 
-                        txn_dep->UnionWaitingSet(txn->sler_waiting_set);
+                        //更新依赖链表中所有事务的 waiting_set
+                        auto deps = txn->sler_dependency;
+                        for (auto dep_pair: deps) {
+                            txn_man *txn_dep = dep_pair.dep_txn;
+
+                            txn_dep->UnionWaitingSet(txn->sler_waiting_set);
+                        }
+                        // 11-8 ---------------------------------------------------------------------
+
+
+                        // Record in Access Object
+//                    txn->cur_row = version_header->row;
+
+                        access->tuple_version = temp_version;
+
+                        break;
+                    } else if (temp_status == ABORTED) {
+//                        rc = access_helper(txn, access, version_header);
+                        temp_version = temp_version->next;
+                        continue;
                     }
-                    // 11-8 ---------------------------------------------------------------------
-
-
-                    // Record in Access Object
-//                    txn->cur_row = version_header->row;
-//                    txn->cur_row->set_data(version_header->data, MAX_TUPLE_SIZE);       //11-18
-//                    txn->cur_row->data = version_header->data;
-//                    access->data = version_header->row;
-
-                    access->tuple_version = version_header;
-                }
-                else if(temp_status == ABORTED){
-                    rc = access_helper(txn,access,version_header);
                 }
             }
         }
+
+        if(!temp_version){
+            rc = Abort;
+        }
+
         blatch = false;
     }
     else if (type == P_REQ) {
@@ -161,7 +170,7 @@ RC Row_sler::access(txn_man * txn, TsType type, Access * access){
             /**
              * Deadlock Detection
              */
-            txn_man* retire_txn = version_header->retire;
+            retire_txn = version_header->retire;
 
             // committed version
             if(!retire_txn){
@@ -239,212 +248,13 @@ RC Row_sler::access(txn_man * txn, TsType type, Access * access){
     return rc;
 }
 
-//RC Row_sler::access(txn_man * txn, TsType type, row_t * row, Access * access){
-//
-//    RC rc = RCOK;
-//    uint64_t txn_id = txn->get_sler_txn_id();
-//
-//    if (type == R_REQ) {
-//        // Note: should search write set and read set. However, since no record will be accessed twice, we don't have to search these two sets
-//
-//        /**
-//         * Notice:
-//         * there won't be any incomplete data, since all meta-data of new version are set before reallocating version_header.
-//         * we can directly access the version_header(must be recorded in temp_version first).
-//         */
-//
-//        Version* temp_version = version_header;
-//
-//        while(!ATOM_CAS(temp_version->version_latch, false, true)){
-//            PAUSE
-//        }
-//
-//        txn_man* retire_txn = temp_version->retire;
-//
-//        // committed version
-//        if(!retire_txn){
-//            rc = RCOK;
-//            txn->cur_row = temp_version->row;             // assign current version to cur_row for future recording
-//            access->tuple_version = temp_version;
-//
-//            temp_version->version_latch = false;
-//        }
-//        // uncommitted version
-//        else{
-//            /**
-//             * Deadlock Detection
-//             */
-//            assert(retire_txn != txn);
-//
-//            // [DeadLock]
-//            if(retire_txn->WaitingSetContains(txn_id)){
-//                temp_version->version_latch = false;
-//                retire_txn->set_abort();
-//
-//                rc = access_helper(txn,row,access,temp_version);
-//            }
-//            // [No Deadlock]
-//            else{
-//                status_t temp_status = retire_txn->status;
-//
-//                // [IMPOSSIBLE]: read without recording dependency
-//                if(temp_status == committing || temp_status == COMMITED){
-//                    // safe: retire_txn cannot commit without acquiring the blatch on this tuple(retire_txn need blatch to modify meta-data),
-//                    // which means it can commit only after I finish the operation(blatch is owned by me)
-//
-//                    txn->cur_row = temp_version->row;
-//                    access->tuple_version = temp_version;
-//
-//                    temp_version->version_latch = false;
-//                }
-//                else if(temp_status == RUNNING || temp_status == validating || temp_status == writing){       // record dependency
-//                    bool_dep res_dep = retire_txn->PushDependency(txn, txn->get_sler_txn_id(), DepType::WRITE_READ_);
-//
-//                    if(res_dep == NOT_CONTAIN){
-//                        txn->SemaphoreAddOne();
-//
-//                        // Update waiting set
-//                        txn->UnionWaitingSet(retire_txn->sler_waiting_set);
-//
-//                        //更新依赖链表中所有事务的 waiting_set
-//                        auto deps = txn->sler_dependency;
-//                        for(auto dep_pair :deps){
-//                            txn_man* txn_dep = dep_pair.first;
-//
-//                            txn_dep->UnionWaitingSet(txn->sler_waiting_set);
-//                        }
-//                    }
-//                    else if(res_dep == CONTAIN_TXN){
-//                        txn->SemaphoreAddOne();
-//                    }
-//                    else{
-//                        assert(res_dep == CONTAIN_TXN_AND_TYPE);
-//                    }
-//
-//                    // Record in Access Object
-//                    txn->cur_row = temp_version->row;
-//                    access->tuple_version = temp_version;
-//
-//                    temp_version->version_latch = false;
-//                }
-//                else if(temp_status == ABORTED){
-//                    temp_version->version_latch = false;
-//                    rc = access_helper(txn,row,access,temp_version);
-//                }
-//            }
-//
-//        }
-//    }
-//    else if (type == P_REQ) {
-//        while (!ATOM_CAS(version_header->version_latch, false, true))
-//            PAUSE
-//
-//        assert(version_header->prev == NULL);               // this tuple version is the newest version
-//
-//        //Error Case, should not happen
-//        if(version_header->end_ts != INF){
-//            version_header->version_latch = false;
-//            rc = Abort;
-//        }
-//        else{
-//            // Note: should search write set and read set. However, since no record will be accessed twice, we don't have to search these two sets
-//
-//            rc = RCOK;
-//
-//            /**
-//             * Deadlock Detection
-//             */
-//            txn_man* retire_txn = version_header->retire;
-//
-//            // committed version
-//            if(!retire_txn){
-//                assert(version_header->begin_ts != UINT64_MAX);
-//                rc = RCOK;
-//                // create new version & record current row in accesses
-//                createNewVersion(txn,access);
-//
-////                version_header->version_latch = false;
-//            }
-//            // uncommitted version
-//            else{
-//                assert(retire_txn != txn);
-//
-//                // [DeadLock]
-//                if(retire_txn->WaitingSetContains(txn_id)){
-//                    rc = WAIT;
-//                    version_header->version_latch = false;
-//                    retire_txn->set_abort();
-//
-//                    COMPILER_BARRIER
-//
-//                    return rc;
-//                }
-//                // [No Deadlock]
-//                else{
-//
-//                    status_t temp_status = retire_txn->status;
-//
-//                    //[IMPOSSIBLE]
-//                    if(temp_status == committing || temp_status == COMMITED){
-//
-//                        // create new version & record current row in accesses
-//                        createNewVersion(txn,access);
-//
-////                        version_header->version_latch = false;
-//                    }
-//                    else if(temp_status == RUNNING || temp_status == validating || temp_status == writing){       // record dependency
-//                        bool_dep res_dep = retire_txn->PushDependency(txn, txn->get_sler_txn_id(),DepType::WRITE_WRITE_);
-//
-//                        if(res_dep == NOT_CONTAIN){
-//                            // Add semaphore
-//                            txn->SemaphoreAddOne();
-//
-//                            txn->UnionWaitingSet(retire_txn->sler_waiting_set);
-//
-//                            //更新依赖链表中所有事务的 waiting_set
-//                            auto deps = txn->sler_dependency;
-//                            for(auto dep_pair :deps){
-//                                txn_man* txn_dep = dep_pair.first;
-//
-//                                txn_dep->UnionWaitingSet(txn->sler_waiting_set);
-//                            }
-//                        }
-//                        else if(res_dep == CONTAIN_TXN){
-//                            // Add semaphore
-//                            txn->SemaphoreAddOne();
-//                        }
-//                        else{
-//                            assert(res_dep == CONTAIN_TXN_AND_TYPE);
-//                        }
-//
-//                        // create new version & record current row in accesses
-//                        createNewVersion(txn,access);
-//
-////                        version_header->version_latch = false;
-//                    }
-//                    else if(temp_status == ABORTED){
-//                        rc = WAIT;
-//                        version_header->version_latch = false;
-//
-//                        return rc;
-//                    }
-//                }
-//
-//            }
-//        }
-//    }
-//    else
-//        assert(false);
-//
-//    return rc;
-//}
 
 void Row_sler::createNewVersion(txn_man * txn, Access * access){
     // create a new Version Object & row object
     Version* new_version = (Version *) _mm_malloc(sizeof(Version), 64);
+
 //    new_version->row = (row_t *) _mm_malloc(sizeof(row_t), 64);
 //    new_version->row->init(MAX_TUPLE_SIZE);
-//    new_version->data= (char *) _mm_malloc(MAX_TUPLE_SIZE, 64);
 
     new_version->prev = NULL;
     new_version->version_latch = false;
@@ -460,14 +270,9 @@ void Row_sler::createNewVersion(txn_man * txn, Access * access){
 //    new_version->row->copy(version_header->row);
 //    new_version->row = version_header->row;
 
-//    memcpy(new_version->data, version_header->data, MAX_TUPLE_SIZE);        //11-18
-
 
     // update the cur_row of txn, record the object of update operation [old version]
 //    txn->cur_row = new_version->row;
-//    txn->cur_row->set_data(new_version->data, MAX_TUPLE_SIZE);      //11-18
-//    txn->cur_row->data = version_header->data;
-//    access->data = new_version->row;
 
     access->tuple_version = version_header;
 
@@ -483,6 +288,8 @@ void Row_sler::createNewVersion(txn_man * txn, Access * access){
     version_header = new_version;
 }
 
+
+
 /**
  * Process the WAIT situation, retrieve all versions until find a visible version.
  * @param txn
@@ -491,132 +298,102 @@ void Row_sler::createNewVersion(txn_man * txn, Access * access){
  * @param access
  * @return
  */
-RC Row_sler::access_helper(txn_man * txn,  Access * access, Version* temp_version_){
-    RC rc = RCOK;
-    uint64_t txn_id = txn->get_sler_txn_id();
-    Version* temp_version = temp_version_->next;
-    txn_man* retire_txn;
-
-    while (temp_version){
-//        while(!ATOM_CAS(temp_version->version_latch, false, true)){
-//            PAUSE
+//RC Row_sler::access_helper(txn_man * txn,  Access * access, Version* temp_version_){
+//    RC rc = RCOK;
+//    uint64_t txn_id = txn->get_sler_txn_id();
+//    Version* temp_version = temp_version_->next;
+//    txn_man* retire_txn;
+//
+//    while (temp_version){
+////        while(!ATOM_CAS(temp_version->version_latch, false, true)){
+////            PAUSE
+////        }
+//
+//        retire_txn = temp_version->retire;
+//
+//        // committed version
+//        if(!retire_txn){
+//            rc = RCOK;
+////            txn->cur_row = temp_version->row;
+//
+//            access->tuple_version = temp_version;
+//
+////            temp_version->version_latch = false;
+//            break;
 //        }
-
-        retire_txn = temp_version->retire;
-
-        // committed version
-        if(!retire_txn){
-            rc = RCOK;
-//            txn->cur_row = temp_version->row;
-//            txn->cur_row->set_data(temp_version->data, MAX_TUPLE_SIZE);       //11-18
-//            txn->cur_row->data = temp_version->data;
-//            access->data = temp_version->row;
-
-            access->tuple_version = temp_version;
-
-//            temp_version->version_latch = false;
-            break;
-        }
-        // uncommitted version
-        else{
-            assert(retire_txn != txn);
-            assert(temp_version->retire_ID == retire_txn->sler_txn_id);          //11-18
-
-
-            // [DeadLock]
-            if(retire_txn->WaitingSetContains(txn_id)){
-                // retrieve all versions until there is a visible version[WAIT]
-//                temp_version->version_latch = false;
-                retire_txn->set_abort();
-                temp_version = temp_version->next;
-                continue;
-            }
-            // [No Deadlock]
-            else{
-
-                status_t temp_status = retire_txn->status;
-
-                // [IMPOSSIBLE]: read without recording dependency
-                if(temp_status == committing || temp_status == COMMITED){
-//                    txn->cur_row = temp_version->row;
-//                    txn->cur_row->set_data(temp_version->data, MAX_TUPLE_SIZE);       //11-18
-//                    txn->cur_row->data = temp_version->data;
-//                    access->data = temp_version->row;
-
-                    access->tuple_version = temp_version;
-
-//                    temp_version->version_latch = false;
-                    break;
-                }
-                else if(temp_status == RUNNING || temp_status == validating || temp_status == writing){       // record dependency
-//                    bool_dep res_dep = retire_txn->PushDependency(txn, txn->get_sler_txn_id(), DepType::WRITE_READ_);
+//        // uncommitted version
+//        else{
+//            assert(retire_txn != txn);
+//            assert(temp_version->retire_ID == retire_txn->sler_txn_id);          //11-18
 //
-//                    if(res_dep == NOT_CONTAIN){
-//                        txn->SemaphoreAddOne();
 //
-//                        // Update waiting set
-//                        txn->UnionWaitingSet(retire_txn->sler_waiting_set);
+//            // [DeadLock]
+//            if(retire_txn->WaitingSetContains(txn_id)){
+//                // retrieve all versions until there is a visible version[WAIT]
+////                temp_version->version_latch = false;
+//                retire_txn->set_abort();
+//                temp_version = temp_version->next;
+//                continue;
+//            }
+//            // [No Deadlock]
+//            else{
 //
-//                        //更新依赖链表中所有事务的 waiting_set
-//                        auto deps = txn->sler_dependency;
-//                        for(auto dep_pair :deps){
-//                            txn_man* txn_dep = dep_pair.first;
+//                status_t temp_status = retire_txn->status;
 //
-//                            txn_dep->UnionWaitingSet(txn->sler_waiting_set);
-//                        }
+//                // [IMPOSSIBLE]: read without recording dependency
+//                if(temp_status == committing || temp_status == COMMITED){
+////                    txn->cur_row = temp_version->row;
+//
+//                    access->tuple_version = temp_version;
+//
+////                    temp_version->version_latch = false;
+//                    break;
+//                }
+//                else if(temp_status == RUNNING || temp_status == validating || temp_status == writing){       // record dependency
+//
+//                    // 11-8: Simplize the logic of recording dependency ------------------------
+//                    txn->SemaphoreAddOne();
+//                    retire_txn->PushDependency(txn,txn->get_sler_txn_id(),DepType::WRITE_READ_);
+//
+//                    // Update waiting set
+//                    txn->UnionWaitingSet(retire_txn->sler_waiting_set);
+//
+//                    //更新依赖链表中所有事务的 waiting_set
+//                    auto deps = txn->sler_dependency;
+//                    for(auto dep_pair :deps){
+//                        txn_man* txn_dep = dep_pair.dep_txn;
+//
+//                        txn_dep->UnionWaitingSet(txn->sler_waiting_set);
 //                    }
-//                    else if(res_dep == CONTAIN_TXN){
-//                        txn->SemaphoreAddOne();
-//                    }
-//                    else{
-//                        assert(res_dep == CONTAIN_TXN_AND_TYPE);
-//                    }
+//                    // 11-8 ---------------------------------------------------------------------
+//
+//
+//                    // Record in Access Object
+////                    txn->cur_row = temp_version->row;
+//
+//                    access->tuple_version = temp_version;
+//
+////                    temp_version->version_latch = false;
+//                    break;
+//                }
+//                else if(temp_status == ABORTED){
+//                    // retrieve all versions until there is a visible version[WAIT]
+////                    temp_version->version_latch = false;
+//
+//                    temp_version = temp_version->next;
+//                    continue;
+//                }
+//            }
+//        }
+//    }
+//
+//    if(!temp_version){
+//        rc = Abort;
+//    }
+//
+//    return rc;
+//}
 
-                    // 11-8: Simplize the logic of recording dependency ------------------------
-                    txn->SemaphoreAddOne();
-                    retire_txn->PushDependency(txn,txn->get_sler_txn_id(),DepType::WRITE_READ_);
-
-                    // Update waiting set
-                    txn->UnionWaitingSet(retire_txn->sler_waiting_set);
-
-                    //更新依赖链表中所有事务的 waiting_set
-                    auto deps = txn->sler_dependency;
-                    for(auto dep_pair :deps){
-                        txn_man* txn_dep = dep_pair.dep_txn;
-
-                        txn_dep->UnionWaitingSet(txn->sler_waiting_set);
-                    }
-                    // 11-8 ---------------------------------------------------------------------
-
-
-                    // Record in Access Object
-//                    txn->cur_row = temp_version->row;
-//                    txn->cur_row->set_data(temp_version->data, MAX_TUPLE_SIZE);       //11-18
-//                    txn->cur_row->data = temp_version->data;
-//                    access->data = temp_version->row;
-
-                    access->tuple_version = temp_version;
-
-//                    temp_version->version_latch = false;
-                    break;
-                }
-                else if(temp_status == ABORTED){
-                    // retrieve all versions until there is a visible version[WAIT]
-//                    temp_version->version_latch = false;
-
-                    temp_version = temp_version->next;
-                    continue;
-                }
-            }
-        }
-    }
-
-    if(!temp_version){
-        rc = Abort;
-    }
-
-    return rc;
-}
 
 
 #endif
