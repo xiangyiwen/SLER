@@ -46,7 +46,7 @@ RC txn_man::validate_sler(RC rc) {
 //        assert(false);
 //    status_latch = false;
 
-    // Abort myself activelyd
+    // Abort myself actively
     if(status == ABORTED){
         abort_process(this);
         return Abort;
@@ -359,9 +359,12 @@ void txn_man::abort_process(txn_man * txn){
 
 //        old_version->version_latch = false;
 
-        new_version->row->free_row();
-        _mm_free(new_version->row);
-        new_version->row = NULL;
+//        new_version->row->free_row();
+//        _mm_free(new_version->row);
+//        new_version->row = NULL;
+//        _mm_free(new_version->data);
+
+
         new_version->retire = nullptr;
 
 //        new_version->version_latch = false;

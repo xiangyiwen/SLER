@@ -28,7 +28,7 @@ void Row_sler::set_row_id(uint64_t _row_id){
 void Row_sler::init(row_t *row){
     // initialize version header
     version_header = (Version *) _mm_malloc(sizeof(Version), 64);
-    version_header->row = row;
+//    version_header->row = row;
 
     version_header->begin_ts = 0;
     version_header->end_ts = INF;
@@ -52,7 +52,7 @@ void Row_sler::init(row_t *row){
  * @param access : the Access Object
  * @return
  */
-RC Row_sler::access(txn_man * txn, TsType type, row_t * row, Access * access){
+RC Row_sler::access(txn_man * txn, TsType type, Access * access){
 
     RC rc = RCOK;
     uint64_t txn_id = txn->get_sler_txn_id();
@@ -69,7 +69,11 @@ RC Row_sler::access(txn_man * txn, TsType type, row_t * row, Access * access){
         // committed version
         if(!retire_txn){
             rc = RCOK;
-            txn->cur_row = version_header->row;             // assign current version to cur_row for future recording
+//            txn->cur_row = version_header->row;             // assign current version to cur_row for future recording
+//            txn->cur_row->set_data(version_header->data, MAX_TUPLE_SIZE);       //11-18
+//            txn->cur_row->data = version_header->data;
+//            access->data = version_header->row;
+
             access->tuple_version = version_header;
         }
         // uncommitted version
@@ -86,10 +90,11 @@ RC Row_sler::access(txn_man * txn, TsType type, row_t * row, Access * access){
 //                blatch = false;
                 retire_txn->set_abort();
 
-                rc = access_helper(txn,row,access,version_header);
+                rc = access_helper(txn,access,version_header);
             }
             // [No Deadlock]
             else{
+
                 status_t temp_status = retire_txn->status;
 
                 // [IMPOSSIBLE]: read without recording dependency
@@ -97,32 +102,14 @@ RC Row_sler::access(txn_man * txn, TsType type, row_t * row, Access * access){
                     // safe: retire_txn cannot commit without acquiring the blatch on this tuple(retire_txn need blatch to modify meta-data),
                     // which means it can commit only after I finish the operation(blatch is owned by me)
 
-                    txn->cur_row = version_header->row;
+//                    txn->cur_row = version_header->row;
+//                    txn->cur_row->set_data(version_header->data, MAX_TUPLE_SIZE);       //11-18
+//                    txn->cur_row->data = version_header->data;
+//                    access->data = version_header->row;
+
                     access->tuple_version = version_header;
                 }
                 else if(temp_status == RUNNING || temp_status == validating || temp_status == writing){       // record dependency
-//                    bool_dep res_dep = retire_txn->PushDependency(txn, txn->get_sler_txn_id(), DepType::WRITE_READ_);
-//
-//                    if(res_dep == NOT_CONTAIN){
-//                        txn->SemaphoreAddOne();
-//
-//                        // Update waiting set
-//                        txn->UnionWaitingSet(retire_txn->sler_waiting_set);
-//
-//                        //更新依赖链表中所有事务的 waiting_set
-//                        auto deps = txn->sler_dependency;
-//                        for(auto dep_pair :deps){
-//                            txn_man* txn_dep = dep_pair.first;
-//
-//                            txn_dep->UnionWaitingSet(txn->sler_waiting_set);
-//                        }
-//                    }
-//                    else if(res_dep == CONTAIN_TXN){
-//                        txn->SemaphoreAddOne();
-//                    }
-//                    else{
-//                        assert(res_dep == CONTAIN_TXN_AND_TYPE);
-//                    }
 
                     // 11-8: Simplize the logic of recording dependency ------------------------
                     txn->SemaphoreAddOne();
@@ -142,17 +129,22 @@ RC Row_sler::access(txn_man * txn, TsType type, row_t * row, Access * access){
 
 
                     // Record in Access Object
-                    txn->cur_row = version_header->row;
+//                    txn->cur_row = version_header->row;
+//                    txn->cur_row->set_data(version_header->data, MAX_TUPLE_SIZE);       //11-18
+//                    txn->cur_row->data = version_header->data;
+//                    access->data = version_header->row;
+
                     access->tuple_version = version_header;
                 }
                 else if(temp_status == ABORTED){
-                    rc = access_helper(txn,row,access,version_header);
+                    rc = access_helper(txn,access,version_header);
                 }
             }
         }
         blatch = false;
     }
     else if (type == P_REQ) {
+
         assert(version_header->prev == nullptr);               // this tuple version is the newest version
 
         //Error Case, should not happen
@@ -180,16 +172,10 @@ RC Row_sler::access(txn_man * txn, TsType type, row_t * row, Access * access){
             }
             // uncommitted version
             else{
-                if(retire_txn == txn){
-                    cout << "retire txn ID: " << version_header->retire_ID << endl;
-                    cout << "current txn ID: " << txn->sler_txn_id << endl;
-
-//                    auto te = glob_manager->_all_txns;
-//                    for(int i=0;i<g_thread_cnt;i++){
-//                        cout << te[i] <<endl;
-//                    }
-
-                }
+//                if(retire_txn == txn){
+//                    cout << "retire txn ID: " << version_header->retire_ID << endl;
+//                    cout << "current txn ID: " << txn->sler_txn_id << endl;
+//                }
                 assert(retire_txn != txn);
                 assert(version_header->retire_ID == retire_txn->sler_txn_id);          //11-18
 
@@ -456,8 +442,10 @@ RC Row_sler::access(txn_man * txn, TsType type, row_t * row, Access * access){
 void Row_sler::createNewVersion(txn_man * txn, Access * access){
     // create a new Version Object & row object
     Version* new_version = (Version *) _mm_malloc(sizeof(Version), 64);
-    new_version->row = (row_t *) _mm_malloc(sizeof(row_t), 64);
-    new_version->row->init(MAX_TUPLE_SIZE);
+//    new_version->row = (row_t *) _mm_malloc(sizeof(row_t), 64);
+//    new_version->row->init(MAX_TUPLE_SIZE);
+//    new_version->data= (char *) _mm_malloc(MAX_TUPLE_SIZE, 64);
+
     new_version->prev = NULL;
     new_version->version_latch = false;
 
@@ -469,10 +457,18 @@ void Row_sler::createNewVersion(txn_man * txn, Access * access){
     new_version->retire_ID = txn->get_sler_txn_id();        //11-17
 
     new_version->next = version_header;
-    new_version->row->copy(version_header->row);
+//    new_version->row->copy(version_header->row);
+//    new_version->row = version_header->row;
+
+//    memcpy(new_version->data, version_header->data, MAX_TUPLE_SIZE);        //11-18
+
 
     // update the cur_row of txn, record the object of update operation [old version]
-    txn->cur_row = new_version->row;
+//    txn->cur_row = new_version->row;
+//    txn->cur_row->set_data(new_version->data, MAX_TUPLE_SIZE);      //11-18
+//    txn->cur_row->data = version_header->data;
+//    access->data = new_version->row;
+
     access->tuple_version = version_header;
 
     // set the meta-data of old_version
@@ -495,7 +491,7 @@ void Row_sler::createNewVersion(txn_man * txn, Access * access){
  * @param access
  * @return
  */
-RC Row_sler::access_helper(txn_man * txn, row_t * row, Access * access, Version* temp_version_){
+RC Row_sler::access_helper(txn_man * txn,  Access * access, Version* temp_version_){
     RC rc = RCOK;
     uint64_t txn_id = txn->get_sler_txn_id();
     Version* temp_version = temp_version_->next;
@@ -511,7 +507,11 @@ RC Row_sler::access_helper(txn_man * txn, row_t * row, Access * access, Version*
         // committed version
         if(!retire_txn){
             rc = RCOK;
-            txn->cur_row = temp_version->row;
+//            txn->cur_row = temp_version->row;
+//            txn->cur_row->set_data(temp_version->data, MAX_TUPLE_SIZE);       //11-18
+//            txn->cur_row->data = temp_version->data;
+//            access->data = temp_version->row;
+
             access->tuple_version = temp_version;
 
 //            temp_version->version_latch = false;
@@ -538,7 +538,11 @@ RC Row_sler::access_helper(txn_man * txn, row_t * row, Access * access, Version*
 
                 // [IMPOSSIBLE]: read without recording dependency
                 if(temp_status == committing || temp_status == COMMITED){
-                    txn->cur_row = temp_version->row;
+//                    txn->cur_row = temp_version->row;
+//                    txn->cur_row->set_data(temp_version->data, MAX_TUPLE_SIZE);       //11-18
+//                    txn->cur_row->data = temp_version->data;
+//                    access->data = temp_version->row;
+
                     access->tuple_version = temp_version;
 
 //                    temp_version->version_latch = false;
@@ -586,7 +590,11 @@ RC Row_sler::access_helper(txn_man * txn, row_t * row, Access * access, Version*
 
 
                     // Record in Access Object
-                    txn->cur_row = temp_version->row;
+//                    txn->cur_row = temp_version->row;
+//                    txn->cur_row->set_data(temp_version->data, MAX_TUPLE_SIZE);       //11-18
+//                    txn->cur_row->data = temp_version->data;
+//                    access->data = temp_version->row;
+
                     access->tuple_version = temp_version;
 
 //                    temp_version->version_latch = false;

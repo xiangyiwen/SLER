@@ -457,8 +457,9 @@ row_t * txn_man::get_row(row_t * row, access_t type) {
     #elif CC_ALG == IC3
         return accesses[row_cnt - 1]->data;
     #elif CC_ALG == SLER
-        return accesses[row_cnt - 1]->data;
-    #else
+//        return accesses[row_cnt - 1]->data;
+        return row;
+#else
       return accesses[row_cnt - 1]->data;
     #endif
 }

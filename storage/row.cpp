@@ -392,17 +392,18 @@ RC row_t::get_row(access_t type, txn_man * txn, row_t *& row, Access * access) {
         return rc;
     #elif CC_ALG == SLER
         TsType ts_type = (type == RD)? R_REQ : P_REQ;
-        rc = this->manager->access(txn, ts_type, row, access);
-        if (rc == RCOK ) {
-            row = txn->cur_row;
-        }
-        else if (rc == WAIT) {
+        rc = this->manager->access(txn, ts_type, access);
+//        if (rc == RCOK ) {
+////            row = txn->cur_row;
+//        }
+//        else
+        if (rc == WAIT) {
 //             we can always access a valid version, unless we are aborted
             uint64_t starttime = get_sys_clock();
 
             // 11-18
             while(rc == WAIT){
-                rc = this->manager->access(txn, ts_type, row, access);
+                rc = this->manager->access(txn, ts_type, access);
 
                 uint64_t span = get_sys_clock() - starttime;
                 if(span > 1000000){
@@ -429,14 +430,14 @@ RC row_t::get_row(access_t type, txn_man * txn, row_t *& row, Access * access) {
 //                return Abort;
 //            }
 
-            if (rc == RCOK ) {
-                row = txn->cur_row;
-            }
+//            if (rc == RCOK ) {
+//                row = txn->cur_row;
+//            }
         }
-        if (rc != Abort) {
-            row->table = get_table();
-            assert(row->get_schema() == this->get_schema());
-        }
+//        if (rc != Abort) {
+//            row->table = get_table();
+//            assert(row->get_schema() == this->get_schema());
+//        }
         return rc;
     #else
         assert(false);
