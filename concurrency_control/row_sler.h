@@ -30,9 +30,11 @@ struct Version {
 
     uint64_t retire_ID;     //11-17
 
-#if WORKLOAD == YCSB
-    char data;
-#endif
+    row_t* data;
+
+//#if WORKLOAD == YCSB
+//    char data;
+//#endif
 
     volatile bool 	version_latch;
 
