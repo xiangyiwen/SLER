@@ -13,6 +13,7 @@
 #include "row_lock.h"
 #include "row_ts.h"
 #include "row_mvcc.h"
+#include "row_sler.h"
 #include "mem_alloc.h"
 #include "query.h"
 void ycsb_txn_man::init(thread_t * h_thd, workload * h_wl, uint64_t thd_id) {
@@ -79,6 +80,18 @@ RC ycsb_txn_man::run_txn(base_query * query) {
                 rc = Abort;
                 goto final;
             }
+
+            if(type == WR) {
+                // Add value to the Version[make MVCC complete]
+                #if CC_ALG == SLER
+                    #if WORKLOAD == YCSB
+                        Version *temp_version = (Version *) accesses[row_cnt - 1]->tuple_version;
+                        temp_version->data = req->value;
+                    #endif
+                #endif
+            }
+
+
 #if CC_ALG == BAMBOO && (THREAD_CNT != 1)
             access_id = row_cnt - 1;
 #endif
