@@ -14,7 +14,7 @@ RC txn_man::validate_sler(RC rc) {
     uint64_t starttime = get_sys_clock();
     while(true){
         uint64_t span = get_sys_clock() - starttime;
-        if(span > 1000000){
+        if(span > 10000000){
             printf("txn_id:%lu,validate_time: %lu\n",sler_txn_id,span);
             abort_process(this);
             return Abort;

@@ -403,15 +403,12 @@ RC row_t::get_row(access_t type, txn_man * txn, row_t *& row, Access * access) {
 
             // 11-18
             while(rc == WAIT){
+                rc = this->manager->access(txn, ts_type, access);
+
                 uint64_t span = get_sys_clock() - starttime;
                 if(span > 1000000){
                     printf("WAIT txn_id:%lu,time: %lu\n",txn->sler_txn_id,span);
-                    rc = Abort;
-                    break;
                 }
-
-                rc = this->manager->access(txn, ts_type, access);
-
                 PAUSE
             }
 
